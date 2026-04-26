@@ -1,0 +1,13 @@
+# Ignore macOS specific files
+.DS_Store
+
+# Ignore Python cache
+__pycache__/
+*.pyc
+
+# Ignore massive RAW data directory to prevent Github 100MB limit crash
+stat628_airplanes/
+
+# If you also want to ignore the final 76MB processed data and require TAs to build it, 
+# uncomment the line below. Otherwise it will push to Github.
+# processed_flights_utc.csv

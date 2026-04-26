@@ -1,0 +1,53 @@
+/* Dark mode improvements */
+.card {
+    transition: box-shadow 0.2s ease;
+}
+.card:hover {
+    box-shadow: 0 4px 20px rgba(255,255,255,0.08) !important;
+}
+.Select-control {
+    background-color: #1a1a2e !important;
+    border-color: #444 !important;
+}
+.Select-value-label {
+    color: #eee !important;
+}
+.Select-placeholder {
+    color: #888 !important;
+}
+.Select-input > input {
+    color: #fff !important;
+}
+.option {
+    color: #eee !important;
+    background-color: #222 !important;
+}
+
+
+/* Native date input styling - clean and compatible with dark theme */
+input[type="date"].form-control {
+    color: #212529 !important;
+    background-color: #ffffff !important;
+    border: 1px solid #ced4da;
+    border-radius: 4px;
+    padding: 6px 10px;
+    font-size: 14px;
+}
+
+/* Add some dynamic hover effects to cards */
+.card {
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 10px 20px rgba(0,0,0,0.4) !important;
+}
+
+/* Style the text better */
+h1 {
+    text-shadow: 0px 2px 4px rgba(0,0,0,0.5);
+    background: -webkit-linear-gradient(45deg, #0d6efd, #0dcaf0);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}

@@ -1,0 +1,465 @@
+---
+title: "STAT 628 airline project: handling dates & times"
+subtitle: "Spring 2026"
+format:
+  pdf:
+    geometry: margin=1in
+    # fontsize: 11pt
+---
+
+```{r}
+#| echo: false
+#| warning: false
+library(tidyverse)
+```
+
+```{r}
+#| output: false
+wd_data = "~/Library/CloudStorage/Box-Box/stat628_airplanes/"
+raw_data <- read_csv(str_c(wd_data, "airlines_2025_9.csv"))
+head(raw_data)
+```
+
+# Re-code Day of the Week
+
+DayOfWeek in airlines data has 1=Monday, 2=Tuesday, ...
+However, tidyverse uses 1=Sunday, 2=Monday, ...
+
+```{r}
+###Understanding `wday`
+#----Tidyverse has 1=Sunday by default
+wday(1, label=TRUE, abbr = TRUE) # 1=Sunday, not Monday but Monday is first level
+wday(1, label=TRUE, week_start=1) # 1 is still Sunday, 
+#but documentation says it should be Monday 
+#(run "?wday" and read about `week_start`)
+wday(1, label=TRUE, week_start=7) #This makes Sunday the first level
+wday(1:7 + 1, label=TRUE) #Need to adjust the start of the week or it makes Sunday NA
+options("lubridate.week.start" = 1)
+wday(1:7, label=TRUE) # 1=Sunday, but Monday < ...
+wday(1:7 + 1, label=TRUE, week_start=1) #Need to +1 to match the airlines data
+
+raw_data %>% 
+  select(DayOfWeek, FlightDate) %>%
+  slice(1) %>%
+  mutate(wday_num = wday(DayOfWeek, label=TRUE),  #2025-09-06 was on a Saturday
+         wday_date = wday(FlightDate, abbr=TRUE))
+
+raw_data %>% 
+  filter(is.na(DayOfWeek)) %>%
+  nrow() # empty
+
+raw_data %>%
+  mutate(DayOfWeek = wday(DayOfWeek+1, label=TRUE)) %>% #Need to add 1 to DayOfWeek 
+#to get the day correct
+  group_by(DayOfWeek) %>%
+  count()
+```
+
+Recode day of week, recode cancellation codes, and save in `f`light `dat`a
+(don't call your data `data`, because `data` is already a function):
+
+
+
+Here is how cancellation code is defined:
+A	Carrier
+B	Weather
+C	National Air System (NAS)
+D	Security
+
+```{r}
+fdat <- raw_data %>%
+  mutate(DayOfWeek = wday(DayOfWeek+1, label=TRUE)) %>%
+  mutate(CancellationCode = recode_values(CancellationCode,
+    NA ~ NA,
+    "A" ~ "Carrier",
+    "B" ~ "Weather",
+    "C" ~ "NAS",
+    "D" ~ "Security"))
+
+
+fdat %>%
+  group_by(CancellationCode) %>%
+  count()
+```
+
+Next, it can be useful to rename variables to use important ones more easily:
+
+```{r}
+fdat <- fdat %>%
+  rename(
+    year = "Year",
+    month = "Month",
+    week = "DayOfWeek",
+    day = "DayofMonth",
+    date = "FlightDate",
+    origin_iata = "Origin", #origin airport
+    origin_city = "OriginCityName",
+    dest_iata   = "Dest",
+    dest_city   = "DestCityName",
+    airline = "Reporting_Airline", #Unique Carrier Code. 
+#When the same code has been used by multiple carriers, 
+#a numeric suffix is used for earlier users, for example, PA, PA(1), PA(2). 
+#Use this field for analysis across a range of years.
+    fl_num  = "Flight_Number_Reporting_Airline", #Flight Number
+    sch_dep_time = "CRSDepTime", #CRS Departure Time (local time: hhmm)
+    act_dep_time = "DepTime", #Actual Departure Time (local time: hhmm)
+    sch_arr_time = "CRSArrTime", #CRS Arrival Time (local time: hhmm)
+    act_arr_time = "ArrTime",  #Actual Arrival Time (local time: hhmm)
+    sch_duration = "CRSElapsedTime", #CRS Elapsed Time of Flight, in Minutes
+    act_duration = "ActualElapsedTime" #Elapsed Time of Flight, in Minutes
+  )
+```
+
+Next, we can remove some variables not used for this date-time demo (though you may want to use them for your analysis):
+
+```{r}
+fdat <- fdat %>%
+  select(!c(DOT_ID_Reporting_Airline, 
+            OriginAirportID:OriginCityMarketID,
+            AirTime,Diverted,Distance:TotalAddGTime))
+```
+
+
+# Add airport elevation and timezone
+
+To make all dates & times comparable, we need to get the time zone of each airport, because all times are currently in the local time zone.
+
+I show here how to add, for each airport (origin & destination: two airports per row), multiple pieces of information that you should use (and see if they do / do not help make predictions):
+
+1. the airport time zone: in `airports_timezone.csv`
+2. the airport type (small, medium, large)
+3. and its elevation: in `airports_elevation.csv`
+
+Both files and the delay data files include the IATA airport code,
+which can be used as a key to join the two datasets.
+
+IANA: Internet Assigned Numbers Authority, for time zones
+IATA: International Air Transport Association, for airport codes
+
+```{r}
+#| output: false
+airportinfo <- read_csv(str_c(wd_data, "airports_elevation.csv"))  
+
+airportinfo |>  group_by(type) |>  count() # some heliport and seaplane_base
+
+airport_tz <- 
+  read_csv(str_c(wd_data,  "airports_timezone.csv")) |>
+  select(iata_code, iana_tz)
+```
+
+## Add origin airport info
+
+```{r}
+airportinfo_origin <- airportinfo |>
+  rename(origin_type = "type",
+         origin_elev = "elevation_ft",
+         origin_iata = "iata_code")
+
+tz_origin <- airport_tz |>
+  rename(origin_iata = "iata_code",
+         origin_tz = "iana_tz")
+
+fdat <- fdat |>
+  left_join(airportinfo_origin, by = "origin_iata") |>
+  left_join(tz_origin, by = "origin_iata")
+
+fdat |> group_by(origin_tz) |> count() |> print(n=Inf) # looks good 
+```
+
+## Add destination airport info
+
+```{r}
+airportinfo_dest <- airportinfo |>
+  rename(dest_type = "type",
+         dest_elev = "elevation_ft",
+         dest_iata = "iata_code")
+
+tz_dest <- airport_tz |>
+  rename(dest_iata = "iata_code",
+         dest_tz = "iana_tz")
+
+fdat <- fdat |>
+  left_join(airportinfo_dest, by = "dest_iata") |>
+  left_join(tz_dest, by = "dest_iata")
+fdat |> group_by(dest_tz) |> count() |> print(n=21)
+```
+
+# Convert times to UTC
+
+Dates & times are tricky (time zones, leap days, daylight savings times,
+different input format). A date, a date-time, and a duration are different things.
+
+Here we have to deal with different time zones and red-eye flights.
+Once handled correctly, we can subtract time-dates, or add a time-date and a duration.
+
+Use [lubridate](https://lubridate.tidyverse.org) for this!
+
+What we have:
+
+```{r}
+fdat |>
+  select(year,month,day,date,sch_dep_time,origin_tz, sch_arr_time,dest_tz) |>
+  head()
+```
+
+A simple example:
+
+```{r}
+?make_datetime
+tmp = make_datetime(year=2025, 
+                    month=5, 
+                    day=1,
+                    hour=as.integer(substr("1615",1,2)),
+                    min=as.integer(substr("1615",3,4)),
+                    sec=0,
+                    tz = "America/New_York") 
+#"America/New_York", "America/Chicago", "America/Los_Angeles"
+
+tmp
+
+with_tz(tmp, tzone="America/Chicago") #with_tz returns a date-time as it would 
+#appear in a different time zone.
+with_tz(tmp, tzone="UTC") 
+```
+
+
+Alternatively, no `tz` argument in `make_datetime` then give it later to `force_tz`:
+```{r}
+tmp = make_datetime(year=2025, 
+                    month=5, 
+                    day=1,
+                    hour=as.integer(substr("1615",1,2)),
+                    min=as.integer(substr("1615",3,4)),
+                    sec=0) # no tz argument
+tmp
+
+force_tz(tmp, tzone="America/New_York")
+
+with_tz(force_tz(tmp, tzone="America/New_York"), "UTC")
+```
+
+
+We will do the above on our data, but we will need the hour and minutes
+separately, and as numeric variables, not characters.
+
+```{r}
+fdat <- fdat |> mutate(
+  sch_dep_hour = as.integer(substr(sch_dep_time,1,2)),
+  sch_dep_min  = as.integer(substr(sch_dep_time,3,4)),
+  act_dep_hour = as.integer(substr(act_dep_time,1,2)),
+  act_dep_min  = as.integer(substr(act_dep_time,3,4)),
+  sch_arr_hour = as.integer(substr(sch_arr_time,1,2)),
+  sch_arr_min  = as.integer(substr(sch_arr_time,3,4)),
+  act_arr_hour = as.integer(substr(act_arr_time,1,2)),
+  act_arr_min  = as.integer(substr(act_arr_time,3,4))
+)
+```
+
+Sanity checks (always do!):
+```{r}
+fdat |> count(sch_dep_hour) |> print(n=25)
+
+fdat |> filter(is.na(sch_dep_time)) |> nrow() # empty: great
+
+str_pad(as.character(c(7,17,117)), width=2, pad="0") # "07"  "17"  "117"
+
+fdat |> select(sch_dep_time, sch_dep_hour, sch_dep_min) |>
+  mutate(
+    tmp = paste0(str_pad(as.character(sch_dep_hour),width=2,pad="0"), #Make departure 
+                 #hours and minutes width=2
+                 str_pad(as.character(sch_dep_min), width=2,pad="0")),
+    bad = is.na(sch_dep_hour) | is.na(sch_dep_min) | (sch_dep_time != tmp) ) |> 
+  #Make sure tmp == sch_dep_time
+  filter(bad) |> nrow() # empty: great!
+```
+
+**Caveat**: red-eye flights have a scheduled arrival day *different* from `day`.
+To get their scheduled arrival date-time (in UTC), we should use their
+arrival time from the departure + duration, instead of what we do above & below.
+We will fix that later.
+
+Immediate **caveat**: `make_datetime` does *not* use its `tz` argument
+correctly within `mutate`, without any warning. It seems to be using the
+timezone of the first row only, not the row's time zone from that row.
+But `force_tz` seems to be using its `tzone` argument correctly within `mutate`:
+
+Note: UTC is 4h ahead of NY, 5h ahead of Chicago, 6h ahead of Denver, 7h ahead of LA.
+Note 2: "Phoenix, Arizona, is consistently 7 hours behind Coordinated Universal Time (UTC-7) year-round. Because Arizona does not observe Daylight Saving Time (DST), this 7-hour difference remains constant, never switching to UTC-6, unlike other Mountain Time locations."
+```{r}
+fdat |>
+  mutate(
+    sch_dep_time_utc1 = with_tz(make_datetime( ###########make_datetime (fails!)
+      year, month, day, sch_dep_hour, sch_dep_min, 0, origin_tz),
+      tzone="UTC"),
+    sch_dep_time_utc2 = with_tz(force_tz(make_datetime( ###########force_tz (works!)
+      year, month, day, sch_dep_hour, sch_dep_min, 0), #no "tzone" specified
+      tzone=origin_tz),tzone="UTC")
+  ) |>
+  select(day, sch_dep_time,origin_tz,
+    sch_dep_time_utc1,sch_dep_time_utc2) |>
+  # head() #First row = America/Chicago
+  filter(sch_dep_time_utc1 != sch_dep_time_utc2) |> 
+  print(n=5)
+```
+
+
+We will use the second version that has no `tz` argument in `make_datetime`,
+but applies `force_tz` with the origin / destination airport time zone.
+
+Lesson: make **lots of sanity checks** to avoid bugs, sometimes big ones.
+
+```{r}
+fdat <- fdat |>
+  mutate(
+    sch_dep_time_utc = with_tz(force_tz(make_datetime(
+      year, month, day, sch_dep_hour, sch_dep_min, 0),
+      tzone=origin_tz),tzone="UTC"),
+    act_dep_time_utc = with_tz(force_tz(make_datetime(
+      year, month, day, act_dep_hour, act_dep_min, 0),
+      tzone=origin_tz),tzone="UTC"),
+    dep_delay_time_utc = act_dep_time_utc - sch_dep_time_utc, 
+    # drtn (Duration): Measured in seconds
+  )
+
+fdat %>% 
+  select(sch_dep_time,act_dep_time, dep_delay_time_utc) %>% 
+  head()
+```
+
+Very basic sanity check:
+```{r}
+fdat |>
+  mutate(
+    dep_delay_sec = DepDelay * 60, ###DepDelay is in minutes
+    dep_delay_min = as.integer(dep_delay_time_utc)/60) |> ###dep_delay_time_utc is a duration in seconds
+  select(DepDelay, dep_delay_sec, dep_delay_time_utc, dep_delay_min) |>
+  head()
+```
+
+
+
+A more thorough check, including how NAs were handled.
+```{r}
+tmp <- fdat |>
+  mutate(
+    dep_delay_min = as.integer(dep_delay_time_utc)/60, #seconds to minutes
+    dep_delay_diff = DepDelay - dep_delay_min) #check diff in our calc vs data
+summary(tmp$DepDelay) #Recall:  in minutes
+summary(tmp$dep_delay_min)  # fewer NAs...
+summary(tmp$dep_delay_diff) # not all 0s...
+
+#Below we look at rows with NA DepDelay, but our calc not NA - all were canceled
+tmp |>
+  filter(is.na(DepDelay) & !is.na(dep_delay_min))  |>  #View() 
+  #We computed a delay, when DepDelay was NA
+  group_by(Cancelled) |>
+  #count()
+  summarize(dep_delay_min = sum(dep_delay_min)) # all cancelled
+
+#Next check differences in (non-NA) raw vs calculated delays, when delays present 
+tmp |> filter(!is.na(DepDelay) & (dep_delay_diff != 0)) |>
+  select(sch_dep_time, act_dep_time, DepDelay, dep_delay_diff) |>
+  # View()
+  group_by(dep_delay_diff) |> count() # -1, 1 or 2 times 1440min = 24 hours
+
+
+tmp |> 
+  filter(Cancelled == 1 & !is.na(DepDelay)) |> 
+  group_by(CancellationCode) |> 
+  count() #Flights were canceled after they left the gate 
+```
+
+Conclusion:
+
+- Do not use our own calculated delay, since some flights were canceled after being delayed
+
+  
+
+```{r}
+fdat <- fdat |> mutate(dep_delay_time_utc=NULL) #This removes the noted column
+```
+
+
+
+## Arrival times for red-eye flights
+
+Scheduled arrival time should be: scheduled departure time + scheduled duration.
+
+```{r}
+summary(fdat$sch_duration) # numeric already, in minutes
+ymd_hms("2025-05-01 16:15:00 EDT")
+ymd_hms("2025-05-01 16:15:00 EDT") + 10 # 10 interpreted in seconds
+ymd_hms("2025-05-01 16:15:00 EDT") + 10*60
+```
+
+Repeat from above, but with arrival instead of departure:
+
+```{r}
+fdat <- fdat |>
+  mutate(
+    sch_arr_time_utc_tmp = with_tz(force_tz(make_datetime(
+      year, month, day, sch_arr_hour, sch_arr_min, 0),
+      tzone=dest_tz),tzone="UTC"),
+    sch_arr_time_utc = sch_dep_time_utc + (sch_duration * 60) 
+  )
+```
+
+Check:
+```{r}
+fdat |> select(sch_arr_time_utc, sch_arr_time_utc_tmp) |>
+  mutate(diff = sch_arr_time_utc_tmp - sch_arr_time_utc) |>
+  group_by(diff) |> count()  # most 0, many -86400s=-1 day, a few other values
+```
+
+These may be actual errors in the input data:
+```{r}
+fdat |> mutate(diff = sch_arr_time_utc_tmp - sch_arr_time_utc) |>
+  filter(diff != 0 & diff !=-86400 & diff !=86400) |>
+  select(day,origin_city,origin_tz,dest_city,dest_tz,
+         DepDelay, TaxiOut, WheelsOff, TaxiIn, WheelsOn, sch_duration,
+    sch_dep_time,sch_dep_hour,sch_dep_min,
+    sch_arr_time,sch_duration,sch_dep_time_utc,
+    sch_arr_time_utc_tmp,sch_arr_time_utc, diff
+  ) |>
+  slice(3) |> 
+  print(width=200) |> 
+  t()
+```
+
+
+One example:
+Flight from Atlanta to Dallas has a scheduled duration of 86 minutes.  It seems this flight should actually take 125 - 145 minutes (fastest recorded was 115 minutes).  Therefore, it seems the `sch_arr_time_utc` is off.
+Furthermore, if the `sch_duration` of 86 minutes was correct, the `sch_arr_time` of "0726" is not in the expected local time, but is still in the departure time zone.
+
+day                  "23"                   
+origin_city          "Atlanta, GA"          
+origin_tz            "America/New_York"     
+dest_city            "Dallas/Fort Worth, TX"
+dest_tz              "America/Chicago"      
+DepDelay             "-9"                   
+TaxiOut              "9"                    
+WheelsOff            "0600"                 
+TaxiIn               "11"                   
+WheelsOn             "1042"                 
+sch_duration         "86"                   
+sch_dep_time         "0600"                 
+sch_dep_hour         "6"                    
+sch_dep_min          "0"                    
+sch_arr_time         "0726"                 
+sch_dep_time_utc     "2025-09-23 10:00:00"  
+sch_arr_time_utc_tmp "2025-09-23 12:26:00"  
+sch_arr_time_utc     "2025-09-23 11:26:00"  
+diff                 "3600 secs"  
+
+You can see 86 is an unusual duration for this flight:
+```{r}
+fdat |> mutate(diff = sch_arr_time_utc_tmp - sch_arr_time_utc) |>
+  filter(origin_city=="Atlanta, GA", dest_city=="Dallas/Fort Worth, TX") |>
+  select(day,origin_city,origin_tz,dest_city,dest_tz,
+         sch_duration) %>%
+  group_by(sch_duration) %>% 
+  count()
+```
+
+
+
