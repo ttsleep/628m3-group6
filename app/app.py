@@ -73,13 +73,15 @@ AIRPORTS = ['ATL', 'DFW', 'DEN', 'ORD', 'LAX', 'JFK', 'LAS', 'MCO',
             'MIA', 'CLT', 'SEA', 'PHX', 'EWR', 'SFO', 'IAH']
 AIRLINES = ['AA', 'DL', 'UA']
 
+DEFAULT_ORIGIN   = 'LAX'
+DEFAULT_DEST     = 'JFK'
+DEFAULT_AIRLINE  = 'DL'
+DEFAULT_DATE     = '2025-12-15'
+DEFAULT_DEP_HOUR = 10
+
 # ── Layout ────────────────────────────────────────────────────────────────────
 app.layout = dbc.Container([
 
-    # Hidden store to track which slider was last changed
-    dcc.Store(id='last-changed-slider', data='dep'),
-
-    # Header
     dbc.Row([dbc.Col([
         html.H1("AeroPredict: Flight Delay & Cancelation Intelligence",
                 className="text-center mt-4 mb-2 text-primary font-weight-bold"),
@@ -90,64 +92,55 @@ app.layout = dbc.Container([
     dbc.Row([dbc.Col([dbc.Card([
         dbc.CardHeader("Flight Itinerary Specification", className="font-weight-bold"),
         dbc.CardBody([
-
-            # Row 1: Origin / Dest
             dbc.Row([
                 dbc.Col([
                     html.Label("Origin Airport"),
                     dcc.Dropdown(id='origin-dp',
                         options=[{'label': a, 'value': a} for a in AIRPORTS],
-                        value='LAX', clearable=False, className="text-dark mb-3")
+                        value=DEFAULT_ORIGIN, clearable=False, className="text-dark mb-3")
                 ], width=6),
                 dbc.Col([
                     html.Label("Destination Airport"),
                     dcc.Dropdown(id='dest-dp',
                         options=[{'label': a, 'value': a} for a in AIRPORTS],
-                        value='JFK', clearable=False, className="text-dark mb-3")
+                        value=DEFAULT_DEST, clearable=False, className="text-dark mb-3")
                 ], width=6),
             ]),
-
-            # Row 2: Airline / Date
             dbc.Row([
                 dbc.Col([
                     html.Label("Airline Carrier"),
                     dcc.Dropdown(id='airline-dp',
                         options=[{'label': a, 'value': a} for a in AIRLINES],
-                        value='DL', clearable=False, className="text-dark mb-3")
+                        value=DEFAULT_AIRLINE, clearable=False, className="text-dark mb-3")
                 ], width=4),
                 dbc.Col([
                     html.Label("Flight Date"),
-                    dbc.Input(id='date-picker', type='date', value='2025-12-15',
+                    dbc.Input(id='date-picker', type='date', value=DEFAULT_DATE,
                         min='2023-09-01', max='2025-12-31', className="mb-3")
                 ], width=8),
             ]),
-
-            # Holiday notice
             dbc.Row([dbc.Col([
                 html.Div(id='holiday-notice', className="text-warning fst-italic mb-2")
             ], width=12)]),
-
-            # Row 3: Dep / Arr sliders (local time, bidirectional)
             dbc.Row([
                 dbc.Col([
                     html.Label("Scheduled Departure Hour — local time (0–23)"),
-                    dcc.Slider(id='dep-hour-slider', min=0, max=23, step=1, value=10,
-                        marks={i: str(i) for i in range(0, 24, 3)},
-                        tooltip={"placement": "bottom", "always_visible": False}),
+                    dcc.Slider(id='dep-hour-slider', min=0, max=23, step=1,
+                        value=DEFAULT_DEP_HOUR,
+                        marks={i: str(i) for i in range(0, 24, 3)}),
                     html.Div(id='dep-hour-display',
                         className="text-info text-center mt-1 mb-3"),
                 ], width=6),
                 dbc.Col([
                     html.Label("Scheduled Arrival Hour — local time (0–23)"),
-                    dcc.Slider(id='arr-hour-slider', min=0, max=23, step=1, value=13,
-                        marks={i: str(i) for i in range(0, 24, 3)},
-                        tooltip={"placement": "bottom", "always_visible": False}),
+                    dcc.Slider(id='arr-hour-slider', min=0, max=23, step=1,
+                        value=int((DEFAULT_DEP_HOUR +
+                            round(get_elapsed(DEFAULT_ORIGIN, DEFAULT_DEST) / 60)) % 24),
+                        marks={i: str(i) for i in range(0, 24, 3)}),
                     html.Div(id='arr-hour-display',
                         className="text-info text-center mt-1 mb-3"),
                 ], width=6),
             ]),
-
-            # Predict button
             dbc.Row([dbc.Col([
                 dbc.Button("Predict Intelligence", id="predict-btn",
                     color="primary", size="lg", className="w-100")
@@ -155,32 +148,234 @@ app.layout = dbc.Container([
         ])
     ], className="mb-4 shadow-sm border-0")], width=12)]),
 
-    # Output row 1: Cancellation gauge + Late probability
+    # Row 1: Cancellation gauge (5) + Late probability (7)
     dbc.Row([
         dbc.Col([dbc.Card([
             dbc.CardHeader("Cancellation Risk"),
             dbc.CardBody([dcc.Graph(id='cancel-gauge')])
-        ], className="h-100 shadow-sm border-0")], width=4),
-
+        ], className="h-100 shadow-sm border-0")], width=5),
         dbc.Col([dbc.Card([
             dbc.CardHeader("Probability of Significant Delay (> 15 min)"),
             dbc.CardBody([dcc.Graph(id='late-prob-chart')])
-        ], className="h-100 shadow-sm border-0")], width=8),
+        ], className="h-100 shadow-sm border-0")], width=7),
     ], className="mb-4"),
 
-    # Output row 2: Delay interval chart
-    dbc.Row([dbc.Col([dbc.Card([
-        dbc.CardHeader("Delay Predictions & Uncertainties (Minutes)"),
-        dbc.CardBody([dcc.Graph(id='delay-box')])
-    ], className="shadow-sm border-0")], width=12)], className="mb-4"),
-
-    # Output row 3: Taxi insight
-    dbc.Row([dbc.Col([dbc.Card([
-        dbc.CardHeader("Runway Taxi Insight"),
-        dbc.CardBody([html.P(id="taxi-text", className="lead text-info")])
-    ], className="shadow-sm border-0")], width=12)], className="mb-4"),
+    # Row 2: Delay interval chart (8) + Taxi insight (4)
+    dbc.Row([
+        dbc.Col([dbc.Card([
+            dbc.CardHeader("Delay Predictions & Uncertainties (Minutes)"),
+            dbc.CardBody([dcc.Graph(id='delay-box')])
+        ], className="h-100 shadow-sm border-0")], width=8),
+        dbc.Col([dbc.Card([
+            dbc.CardHeader("Runway Taxi Insight"),
+            dbc.CardBody([
+                html.P(id="taxi-text", className="lead text-info"),
+            ])
+        ], className="h-100 shadow-sm border-0")], width=4),
+    ], className="mb-4"),
 
 ], fluid=True, className="p-5")
+
+
+# ── Helper: build delay interval figure ──────────────────────────────────────
+def make_delay_fig(dep_pred, arr_pred):
+    fig = go.Figure()
+
+    labels      = ['Departure Delay', 'Arrival Delay']
+    preds       = [dep_pred, arr_pred]
+    good_colors = ['rgba(39,174,96,0.7)',  'rgba(39,174,96,0.7)']
+    risk_colors = ['rgba(231,76,60,0.7)',  'rgba(231,76,60,0.7)']
+    med_colors  = ['rgba(255,159,64,1)',   'rgba(153,102,255,1)']
+
+    for label, pred, gc, rc, mc in zip(
+            labels, preds, good_colors, risk_colors, med_colors):
+
+        q10, q50, q90 = pred
+
+        # Good zone: q10 → q50
+        fig.add_trace(go.Bar(
+            name=f'{label} best→median',
+            y=[label], x=[q50 - q10], base=q10,
+            orientation='h',
+            marker=dict(color=gc, line=dict(width=0)),
+            width=0.4, showlegend=False,
+            hovertemplate=(
+                f"<b>{label}</b><br>"
+                f"Best case (10th pct):  {q10:.1f} min<br>"
+                f"Median (50th pct):     {q50:.1f} min<br>"
+                f"Worst case (90th pct): {q90:.1f} min"
+                "<extra></extra>"
+            )
+        ))
+
+        # Risk zone: q50 → q90
+        fig.add_trace(go.Bar(
+            name=f'{label} median→worst',
+            y=[label], x=[q90 - q50], base=q50,
+            orientation='h',
+            marker=dict(color=rc, line=dict(width=0)),
+            width=0.4, showlegend=False,
+            hovertemplate=(
+                f"<b>{label}</b><br>"
+                f"Best case (10th pct):  {q10:.1f} min<br>"
+                f"Median (50th pct):     {q50:.1f} min<br>"
+                f"Worst case (90th pct): {q90:.1f} min"
+                "<extra></extra>"
+            )
+        ))
+
+        # Median marker
+        fig.add_trace(go.Scatter(
+            name=label,
+            y=[label], x=[q50],
+            mode='markers+text',
+            marker=dict(color=mc, size=14, symbol='diamond',
+                        line=dict(color='white', width=1)),
+            text=[f"  {q50:.1f} min"],
+            textposition='middle right',
+            textfont=dict(color=mc, size=11),
+            showlegend=True,
+            hoverinfo='skip',
+        ))
+
+        # q10 and q90 end labels
+        fig.add_annotation(
+            x=q10, y=label, text=f"{q10:.1f}",
+            showarrow=False, xanchor='right',
+            font=dict(color='#adb5bd', size=10), xshift=-6,
+        )
+        fig.add_annotation(
+            x=q90, y=label, text=f"{q90:.1f}",
+            showarrow=False, xanchor='left',
+            font=dict(color='#adb5bd', size=10), xshift=6,
+        )
+
+    fig.add_vline(x=0, line_dash='dash', line_color='white', opacity=0.5)
+    fig.add_annotation(
+        x=0, y=1.08, yref='paper',
+        text="← Early  |  On Time  |  Late →",
+        showarrow=False,
+        font=dict(color='#adb5bd', size=11),
+        xanchor='center',
+    )
+
+    fig.update_layout(
+        barmode='stack',
+        xaxis=dict(
+            title="Minutes (negative = early)",
+            gridcolor='#444',
+            zerolinecolor='white',
+            zerolinewidth=1,
+        ),
+        yaxis=dict(autorange='reversed'),
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)',
+        font={'color': 'white'},
+        legend=dict(orientation='h', y=1.15, x=0),
+        margin=dict(t=50, b=40, l=20, r=40),
+        height=280,
+    )
+    return fig
+
+
+# ── Helper: run prediction & build all figures ────────────────────────────────
+def make_predictions(origin, dest, airline, flight_date, dep_hour):
+    d     = datetime.date.fromisoformat(flight_date) if flight_date else datetime.date(2025, 12, 15)
+    month = d.month
+    day   = d.isoweekday()
+
+    cat_df = pd.DataFrame({'Origin': [origin], 'Dest': [dest],
+                           'Reporting_Airline': [airline]})
+    try:
+        encoded = encoder.transform(cat_df)[0]
+    except Exception:
+        encoded = [-1, -1, -1]
+
+    elapsed   = get_elapsed(origin, dest)
+    elev_diff = ELEV_MAP.get(dest, 0) - ELEV_MAP.get(origin, 0)
+    t_out_avg = taxi_stats['taxi_out'].get(origin, 20.0)
+    t_in_avg  = taxi_stats['taxi_in'].get(dest,   10.0)
+
+    X = pd.DataFrame({
+        'Origin_code':        [encoded[0]],
+        'Dest_code':          [encoded[1]],
+        'Airline_code':       [encoded[2]],
+        'Month':              [month],
+        'DayOfWeek':          [day],
+        'CRSDepHour_local':   [dep_hour],
+        'WeekOfMonth':        [(d.day - 1) // 7 + 1],
+        'days_to_holiday':    [days_to_nearest_holiday(d)],
+        'is_christmas_window':[is_christmas_window(month, d.day)],
+        'CRSElapsedTime':     [elapsed],
+        'elev_diff':          [elev_diff],
+        'TaxiOut_avg_origin': [t_out_avg],
+        'TaxiIn_avg_dest':    [t_in_avg],
+    })
+
+    cancel_prob  = float(clf_cancelled.predict_proba(X)[0][1] * 100)
+    dep_late_pct = float(clf_dep_late.predict_proba(X)[0][1] * 100)
+    arr_late_pct = float(clf_arr_late.predict_proba(X)[0][1] * 100)
+    dep_pred     = [reg_dep_delay[f'q_{q}'].predict(X)[0] for q in [10, 50, 90]]
+    arr_pred     = [reg_arr_delay[f'q_{q}'].predict(X)[0] for q in [10, 50, 90]]
+
+    # Gauge
+    gauge_max = max(2.0, round(cancel_prob * 2.5, 1))
+    fig_gauge = go.Figure(go.Indicator(
+        mode="gauge+number", value=cancel_prob,
+        number={'valueformat': '.2f', 'suffix': "%"},
+        title={'text': "Cancelation Probability (%)", 'font': {'size': 20}},
+        gauge={
+            'axis': {'range': [0, gauge_max], 'tickwidth': 1, 'tickcolor': 'white'},
+            'bar':  {'color': 'white', 'thickness': 0.25},
+            'bgcolor': 'rgba(0,0,0,0)',
+            'steps': [
+                {'range': [0,               gauge_max * 0.3], 'color': '#006400'},
+                {'range': [gauge_max * 0.3, gauge_max * 0.6], 'color': '#B8860B'},
+                {'range': [gauge_max * 0.6, gauge_max],       'color': '#8B0000'},
+            ]
+        }
+    ))
+    fig_gauge.update_layout(
+        paper_bgcolor='rgba(0,0,0,0)', font={'color': 'white'},
+        margin=dict(t=60, b=20, l=20, r=20)
+    )
+
+    # Late prob bars — dynamic x axis
+    x_max = max(10.0, round(max(dep_late_pct, arr_late_pct) * 1.4))
+    fig_late = go.Figure()
+    for label, val, color in [
+        ("Departure > 15 min late", dep_late_pct, '#FF9F40'),
+        ("Arrival > 15 min late",   arr_late_pct, '#9966FF'),
+    ]:
+        fig_late.add_trace(go.Bar(
+            x=[val], y=[label], orientation='h',
+            marker_color=color,
+            text=[f"{val:.1f}%"], textposition='outside',
+            width=0.4,
+        ))
+    fig_late.update_layout(
+        xaxis=dict(range=[0, x_max], title="Probability (%)",
+                   gridcolor='gray', ticksuffix='%'),
+        yaxis=dict(autorange='reversed'),
+        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+        font={'color': 'white'}, showlegend=False,
+        margin=dict(t=20, b=40, l=20, r=80), bargap=0.4,
+    )
+
+    # Delay interval chart
+    fig_box = make_delay_fig(dep_pred, arr_pred)
+
+    # Taxi text
+    taxi_insight = (
+        f"📍 At {origin}, the average taxi-out time is {t_out_avg:.1f} min. "
+        f"This is the time from gate push-back to wheels-off, and contributes to "
+        f"departure delay but is not counted in the official DepDelay figure.\n\n"
+        f"🛬 At {dest}, the average taxi-in time is {t_in_avg:.1f} min. "
+        f"This is the time from wheels-on to gate arrival, and can contribute to "
+        f"arrival delay at the gate."
+    )
+
+    return fig_gauge, fig_late, fig_box, taxi_insight
 
 
 # ── Callbacks ─────────────────────────────────────────────────────────────────
@@ -222,27 +417,16 @@ def show_holiday_notice(flight_date):
 )
 def sync_sliders(dep_hour, arr_hour, origin, dest):
     elapsed_hours = round(get_elapsed(origin, dest) / 60)
-
     ctx = dash.callback_context
     if not ctx.triggered:
         return dep_hour, arr_hour
-
     triggered_id = ctx.triggered[0]['prop_id'].split('.')[0]
-
     if triggered_id == 'dep-hour-slider':
-        # 出发变 → 到达跟着动
-        new_arr = int((dep_hour + elapsed_hours) % 24)
-        return dep_hour, new_arr
-
+        return dep_hour, int((dep_hour + elapsed_hours) % 24)
     elif triggered_id == 'arr-hour-slider':
-        # 到达变 → 出发跟着动
-        new_dep = int((arr_hour - elapsed_hours) % 24)
-        return new_dep, arr_hour
-
+        return int((arr_hour - elapsed_hours) % 24), arr_hour
     else:
-        # 航线变了 → 出发不变，到达重新计算
-        new_arr = int((dep_hour + elapsed_hours) % 24)
-        return dep_hour, new_arr
+        return dep_hour, int((dep_hour + elapsed_hours) % 24)
 
 
 @app.callback(
@@ -267,18 +451,15 @@ def show_arr_hour(h):
     Output('delay-box',       'figure'),
     Output('taxi-text',       'children'),
     Input('predict-btn', 'n_clicks'),
-    State('origin-dp',       'value'),
+    Input('origin-dp',   'value'),
     State('dest-dp',         'value'),
     State('airline-dp',      'value'),
     State('date-picker',     'value'),
     State('dep-hour-slider', 'value'),
-    prevent_initial_call=True,
 )
 def update_predictions(n_clicks, origin, dest, airline, flight_date, dep_hour):
-
     d     = datetime.date.fromisoformat(flight_date) if flight_date else datetime.date(2025, 12, 15)
     month = d.month
-    day   = d.isoweekday()  # 1=Mon … 7=Sun
 
     if month not in range(9, 13):
         warn_msg = (f"⚠️ Month {d.strftime('%B')} is outside our training data scope "
@@ -292,128 +473,7 @@ def update_predictions(n_clicks, origin, dest, airline, flight_date, dep_hour):
         )
         return empty_fig, empty_fig, empty_fig, warn_msg
 
-    cat_df = pd.DataFrame({'Origin': [origin], 'Dest': [dest], 'Reporting_Airline': [airline]})
-    try:
-        encoded = encoder.transform(cat_df)[0]
-    except Exception:
-        encoded = [-1, -1, -1]
-
-    elapsed   = get_elapsed(origin, dest)
-    elev_diff = ELEV_MAP.get(dest, 0) - ELEV_MAP.get(origin, 0)
-    t_out_avg = taxi_stats['taxi_out'].get(origin, 20.0)
-    t_in_avg  = taxi_stats['taxi_in'].get(dest,   10.0)
-
-    X = pd.DataFrame({
-        'Origin_code':        [encoded[0]],
-        'Dest_code':          [encoded[1]],
-        'Airline_code':       [encoded[2]],
-        'Month':              [month],
-        'DayOfWeek':          [day],
-        'CRSDepHour_local':   [dep_hour],
-        'WeekOfMonth':        [(d.day - 1) // 7 + 1],
-        'days_to_holiday':    [days_to_nearest_holiday(d)],
-        'is_christmas_window':[is_christmas_window(month, d.day)],
-        'CRSElapsedTime':     [elapsed],
-        'elev_diff':          [elev_diff],
-        'TaxiOut_avg_origin': [t_out_avg],
-        'TaxiIn_avg_dest':    [t_in_avg],
-    })
-
-    # ── 1. Cancellation gauge ─────────────────────────────────────────────────
-    cancel_prob = float(clf_cancelled.predict_proba(X)[0][1] * 100)
-    gauge_max   = max(2.0, round(cancel_prob * 2.5, 1))
-
-    fig_gauge = go.Figure(go.Indicator(
-        mode="gauge+number",
-        value=cancel_prob,
-        number={'valueformat': '.2f', 'suffix': "%"},
-        title={'text': "Cancelation Probability (%)", 'font': {'size': 20}},
-        gauge={
-            'axis': {'range': [0, gauge_max], 'tickwidth': 1, 'tickcolor': 'white'},
-            'bar':  {'color': 'white', 'thickness': 0.25},
-            'bgcolor': 'rgba(0,0,0,0)',
-            'steps': [
-                {'range': [0,               gauge_max * 0.3], 'color': '#006400'},
-                {'range': [gauge_max * 0.3, gauge_max * 0.6], 'color': '#B8860B'},
-                {'range': [gauge_max * 0.6, gauge_max],       'color': '#8B0000'},
-            ]
-        }
-    ))
-    fig_gauge.update_layout(
-        paper_bgcolor='rgba(0,0,0,0)', font={'color': 'white'},
-        margin=dict(t=60, b=20, l=20, r=20)
-    )
-
-    # ── 2. Late probability bars ──────────────────────────────────────────────
-    dep_late_pct = float(clf_dep_late.predict_proba(X)[0][1] * 100)
-    arr_late_pct = float(clf_arr_late.predict_proba(X)[0][1] * 100)
-
-    fig_late = go.Figure()
-    for label, val, color in [
-        ("Departure > 15 min late", dep_late_pct, '#FF9F40'),
-        ("Arrival > 15 min late",   arr_late_pct, '#9966FF'),
-    ]:
-        fig_late.add_trace(go.Bar(
-            x=[val], y=[label], orientation='h',
-            marker_color=color,
-            text=[f"{val:.1f}%"], textposition='outside',
-            width=0.4,
-        ))
-    fig_late.update_layout(
-        xaxis=dict(range=[0, 100], title="Probability (%)",
-                   gridcolor='gray', ticksuffix='%'),
-        yaxis=dict(autorange='reversed'),
-        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-        font={'color': 'white'}, showlegend=False,
-        margin=dict(t=20, b=40, l=20, r=80),
-        bargap=0.4,
-    )
-
-    # ── 3. Quantile delay chart ───────────────────────────────────────────────
-    dep_pred = [reg_dep_delay[f'q_{q}'].predict(X)[0] for q in [10, 50, 90]]
-    arr_pred = [reg_arr_delay[f'q_{q}'].predict(X)[0] for q in [10, 50, 90]]
-
-    fig_box = go.Figure()
-    for label, pred, color in [
-        ("Departure Delay", dep_pred, 'rgba(255,159,64,1)'),
-        ("Arrival Delay",   arr_pred, 'rgba(153,102,255,1)'),
-    ]:
-        fig_box.add_trace(go.Scatter(
-            name=label, x=[label], y=[pred[1]],
-            error_y=dict(
-                type='data', symmetric=False,
-                array=[max(pred[2] - pred[1], 0)],
-                arrayminus=[max(pred[1] - pred[0], 0)],
-                color=color, thickness=3, width=20
-            ),
-            marker=dict(color=color, size=15),
-            mode='markers',
-            hovertemplate=(
-                f"<b>{label}</b><br>"
-                f"10th pct: {pred[0]:.1f} min<br>"
-                f"Median:   {pred[1]:.1f} min<br>"
-                f"90th pct: {pred[2]:.1f} min<extra></extra>"
-            )
-        ))
-
-    fig_box.add_hline(y=0, line_dash='dash', line_color='white', opacity=0.4)
-    fig_box.update_layout(
-        yaxis_title="Delay in Minutes (Negative is Early)",
-        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-        font={'color': 'white'},
-        yaxis=dict(gridcolor='gray', zerolinecolor='white'),
-        margin=dict(t=20, b=40)
-    )
-
-    # ── 4. Taxi insight ───────────────────────────────────────────────────────
-    taxi_insight = (
-        f"Historical data at {origin} indicates an average Taxi-Out time of "
-        f"{t_out_avg:.1f} minutes contributing to possible departure discrepancies. "
-        f"Upon landing at {dest}, expect an average Taxi-In time of "
-        f"{t_in_avg:.1f} minutes before reaching the gate."
-    )
-
-    return fig_gauge, fig_late, fig_box, taxi_insight
+    return make_predictions(origin, dest, airline, flight_date, dep_hour)
 
 
 if __name__ == '__main__':
