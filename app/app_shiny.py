@@ -24,6 +24,13 @@ def days_to_nearest_holiday(date):
     ]
     return min(abs((date - h).days) for h in holidays)
 
+def is_christmas_window(month, day):
+    if month == 12 and day >= 20:
+        return 1
+    if month == 1 and day <= 3:
+        return 1
+    return 0
+
 # ── Load models ──────────────────────────────────────────────────────────────
 MODELS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'models')
 
@@ -32,6 +39,7 @@ clf_cancelled  = joblib.load(os.path.join(MODELS_DIR, 'clf_cancelled.joblib'))
 reg_dep_delay  = joblib.load(os.path.join(MODELS_DIR, 'reg_dep_delay.joblib'))
 reg_arr_delay  = joblib.load(os.path.join(MODELS_DIR, 'reg_arr_delay.joblib'))
 taxi_stats     = joblib.load(os.path.join(MODELS_DIR, 'taxi_stats.joblib'))
+meta           = joblib.load(os.path.join(MODELS_DIR, 'feature_meta.joblib'))
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 AIRPORTS = ['ATL','DFW','DEN','ORD','LAX','JFK','LAS','MCO',
@@ -68,7 +76,7 @@ _input_card = ui.card(
                       min="2023-09-01", max="2025-12-31"),
         col_widths=[6, 6],
     ),
-    ui.input_slider("hour", "Scheduled Departure Hour (UTC)",
+    ui.input_slider("hour", "Scheduled Departure Hour (local time)",
                     min=0, max=23, value=12, step=1),
     ui.input_action_button("predict", "⚡  Predict Now",
                            class_="btn-primary w-100 mt-2"),
@@ -150,15 +158,28 @@ def server(input, output, session):
         except Exception:
             enc = [-1, -1, -1]
 
+        elev_map   = meta.get('elev_map', {})
+        od_elapsed = meta.get('od_elapsed', {})
+        
+        elapsed = od_elapsed.get((origin, dest), 150.0)
+        elev_diff = elev_map.get(dest, 0) - elev_map.get(origin, 0)
+        t_out = taxi_stats['taxi_out'].get(origin, 20.0)
+        t_in  = taxi_stats['taxi_in'].get(dest, 10.0)
+
         X = pd.DataFrame({
-            'Origin_code':    [enc[0]],
-            'Dest_code':      [enc[1]],
-            'Airline_code':   [enc[2]],
-            'Month':          [month],
-            'DayOfWeek':      [dow],
-            'CRSDepHour':     [hour],
-            'WeekOfMonth':    [(d.day - 1) // 7 + 1],
-            'days_to_holiday':[days_to_nearest_holiday(d)],
+            'Origin_code':        [enc[0]],
+            'Dest_code':          [enc[1]],
+            'Airline_code':       [enc[2]],
+            'Month':              [month],
+            'DayOfWeek':          [dow],
+            'CRSDepHour_local':   [hour],
+            'WeekOfMonth':        [(d.day - 1) // 7 + 1],
+            'days_to_holiday':    [days_to_nearest_holiday(d)],
+            'is_christmas_window':[is_christmas_window(month, d.day)],
+            'CRSElapsedTime':     [elapsed],
+            'elev_diff':          [elev_diff],
+            'TaxiOut_avg_origin': [t_out],
+            'TaxiIn_avg_dest':    [t_in],
         })
 
         cancel_pct = clf_cancelled.predict_proba(X)[0][1] * 100

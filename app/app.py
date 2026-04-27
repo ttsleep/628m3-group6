@@ -45,6 +45,7 @@ def get_holiday_notice(date):
 
 # ── App init ──────────────────────────────────────────────────────────────────
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.DARKLY])
+server = app.server
 app.title = "AeroPredict: Flight Intelligence"
 
 MODELS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'models')
