@@ -1,6 +1,7 @@
 dash==4.1.0
 pandas==2.0.3
-numpy<2.0.0
+numpy==1.26.4
+scipy==1.11.1
 scikit-learn==1.6.1
 joblib==1.2.0
 plotly==5.9.0
